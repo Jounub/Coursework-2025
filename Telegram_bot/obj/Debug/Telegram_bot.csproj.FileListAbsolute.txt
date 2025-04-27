@@ -1,2 +1,0 @@
-C:\Проект_по_боту\Telegram_bot\Telegram_bot\obj\Debug\Telegram_bot.csproj.AssemblyReference.cache
-C:\Проект_по_боту\Telegram_bot\Telegram_bot\obj\Debug\Telegram_bot.csproj.CoreCompileInputs.cache
