@@ -42,12 +42,14 @@ public class ScheduleParser
         return buttons.Count > 0 ? new InlineKeyboardMarkup(buttons) : null;
     }
 
-    public async Task<string?> GetGroupScheduleAsync(string groupId)
+    public async Task<string?> GetGroupScheduleAsync(string groupId, DateTime startDate, DateTime endDate)
     {
         if (string.IsNullOrEmpty(groupId))
             return null;
 
-        var url = $"https://urfu.ru/api/v2/schedule/groups/{groupId}/schedule?date_gte=2025-05-12&date_lte=2025-05-18";
+        var url = $"https://urfu.ru/api/v2/schedule/groups/{groupId}/schedule?" +
+                  $"date_gte={startDate:yyyy-MM-dd}&date_lte={endDate:yyyy-MM-dd}";
+
         using var httpClient = new HttpClient();
 
         try
@@ -57,7 +59,7 @@ public class ScheduleParser
                 return null;
 
             var json = await response.Content.ReadAsStringAsync();
-            return FormatSchedule(json);
+            return FormatSchedule(json, startDate, endDate);
         }
         catch
         {
@@ -65,75 +67,73 @@ public class ScheduleParser
         }
     }
 
-private string FormatSchedule(string json)
-{
-    try
+    private string FormatSchedule(string json, DateTime startDate, DateTime endDate)
     {
-        var scheduleData = JsonConvert.DeserializeObject<ScheduleResponse>(json);
-        if (scheduleData?.Events == null || !scheduleData.Events.Any())
-            return "Расписание не найдено";
-
-        var sb = new StringBuilder();
-        sb.AppendLine($"📅 <b>Расписание группы {scheduleData.GroupName}</b>");
-        sb.AppendLine($"📆 Период: {scheduleData.StartDate:dd.MM.yyyy} - {scheduleData.EndDate:dd.MM.yyyy}");
-        sb.AppendLine();
-
-        foreach (var lesson in scheduleData.Events)
+        try
         {
-            sb.AppendLine($"\n<b>📌 {lesson.Date:dddd, dd.MM.yyyy}</b>");
+            var scheduleData = JsonConvert.DeserializeObject<ScheduleResponse>(json);
+            if (scheduleData?.Events == null || !scheduleData.Events.Any())
+                return "Расписание не найдено";
 
-            if (lesson.Title == null || !lesson.Title.Any())
+            //Сортировка занятий по дате и времени
+            List<Lesson> orderedList = scheduleData.Events.OrderBy(l => l.Date).ThenBy(l => l.TimeBegin).ToList();
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"📆 Период: {startDate:dd.MM.yyyy} - {endDate:dd.MM.yyyy}");
+
+            foreach (var lesson in orderedList)
             {
-                sb.AppendLine("   🎉 Выходной");
-                continue;
+                //Дату и число пишем в сообщении только если занятие первое в списке или дата текущего занятия не совпадает с датой предыдущего
+                if (orderedList.IndexOf(lesson) == 0 || lesson.Date != orderedList[orderedList.IndexOf(lesson) -1].Date)
+                {
+                    sb.AppendLine($"\n<b>📌 {lesson.Date:dddd, dd.MM.yyyy}</b>");
+                }
+
+                if (lesson.Title == null || !lesson.Title.Any())
+                {
+                    sb.AppendLine("   🎉 Выходной");
+                    continue;
+                }
+
+                sb.AppendLine($"\n🕒 <i>{lesson.TimeBegin:hh\\:mm} - {lesson.TimeEnd:hh\\:mm}</i>");
+                sb.AppendLine($"   <b>{lesson.Title}</b>");
+
+                //В расписании если AuditoryLocation=AuditoryTitle, то это онлайн занятие, адрес выводить не нужно
+                if (!string.IsNullOrEmpty(lesson.AuditoryTitle) && !string.IsNullOrEmpty(lesson.AuditoryLocation) && lesson.AuditoryTitle != lesson.AuditoryLocation)
+                    sb.AppendLine($"   🚪 {lesson.AuditoryLocation}, каб. {lesson.AuditoryTitle}");
+                else if(!string.IsNullOrEmpty(lesson.AuditoryTitle))
+                    sb.AppendLine($"   🚪 {lesson.AuditoryTitle}");
+
+                if (!string.IsNullOrEmpty(lesson.LoadType))
+                    sb.AppendLine($"   🏷 Тип: {lesson.LoadType}");
             }
 
-            sb.AppendLine($"\n🕒 <i>{lesson.TimeBegin} - {lesson.TimeEnd}</i>");
-            sb.AppendLine($"   <b>{lesson.Title}</b>");
-               
-            if (!string.IsNullOrEmpty(lesson.TeacherName))
-                sb.AppendLine($"   👨‍🏫 {lesson.TeacherName}");
-                
-            if (!string.IsNullOrEmpty(lesson.AuditoryTitle))
-                sb.AppendLine($"   🚪 {lesson.AuditoryTitle}");
-                
-            if (!string.IsNullOrEmpty(lesson.LoadType))
-                sb.AppendLine($"   🏷 Тип: {lesson.LoadType}");            
+            return sb.ToString();
         }
-
-        return sb.ToString();
+        catch (Exception ex)
+        {
+            return $"⚠ Ошибка форматирования расписания: {ex.Message}";
+        }
     }
-    catch (Exception ex)
+
+    // Модели для десериализации JSON
+    private class ScheduleResponse
     {
-        return $"⚠ Ошибка форматирования расписания: {ex.Message}";
+        public string Title { get; set; } = string.Empty;
+        public List<Lesson> Events { get; set; } = new();
     }
-}
 
-// Модели для десериализации JSON
-private class ScheduleResponse
-{
-    public string GroupName { get; set; } = string.Empty;
-    public DateTime StartDate { get; set; }
-    public DateTime EndDate { get; set; }
-    public List<Lesson> Events { get; set; } = new();
-}
-
-private class DaySchedule
-{
-    public DateTime Date { get; set; }
-    public string Title { get; set; } = string.Empty;
-}
-
-private class Lesson
-{
-    public string Title { get; set; } = string.Empty;
-    public DateTime Date { get; set; }
-    public string LoadType { get; set; } = string.Empty;
-    public string TeacherName { get; set; } = string.Empty;
-    public string AuditoryTitle { get; set; } = string.Empty;
-    public TimeSpan TimeBegin { get; set; }
-    public TimeSpan TimeEnd { get; set; }
-}
+    private class Lesson
+    {
+        public string Title { get; set; } = string.Empty;
+        public DateTime Date { get; set; }
+        public string LoadType { get; set; } = string.Empty;
+        public string TeacherName { get; set; } = string.Empty;
+        public string AuditoryTitle { get; set; } = string.Empty;
+        public TimeSpan TimeBegin { get; set; }
+        public TimeSpan TimeEnd { get; set; }
+        public string AuditoryLocation { get; set; } = string.Empty;
+    }
 
     private class GroupInfo
     {
