@@ -29,6 +29,14 @@ public class TelegramBotService : IHostedService
         _scheduleParser = scheduleParser;
     }
 
+
+    private readonly Dictionary<long, UserState> _userStates = new();
+    private enum UserState
+    {
+        None,
+        AwaitingGroupSearch
+    }
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting bot...");
@@ -92,11 +100,22 @@ public class TelegramBotService : IHostedService
             return;
         }
 
-        // Обработка поиска групп
-        if (messageText.StartsWith("/search "))
+        // Обработка команды /search (без группы)
+        if (messageText.Equals("/search", StringComparison.OrdinalIgnoreCase))
         {
-            var searchQuery = messageText[8..].Trim();
-            await HandleGroupSearch(chatId, searchQuery, cancellationToken);
+            _userStates[chatId] = UserState.AwaitingGroupSearch; // Устанавливаем состояние
+            await _botClient.SendTextMessageAsync(
+                chatId: chatId,
+                text: "🔍 Введите номер группы (например, РИЗ-220501):",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        // Если пользователь в состоянии "ожидает ввода группы"
+        if (_userStates.TryGetValue(chatId, out var state) && state == UserState.AwaitingGroupSearch)
+        {
+            _userStates.Remove(chatId); // Сбрасываем состояние
+            await HandleGroupSearch(chatId, messageText, cancellationToken); // Ищем группу
             return;
         }
 
@@ -247,7 +266,7 @@ public class TelegramBotService : IHostedService
 
             var schedule = await _scheduleParser.GetGroupScheduleAsync(groupId, groupTitle, startOfWeek, endOfWeek);
 
-            if (string.IsNullOrEmpty(schedule))
+            if (schedule == null || !schedule.Any())
             {
                 await _botClient.SendTextMessageAsync(
                     chatId: chatId,
@@ -256,11 +275,14 @@ public class TelegramBotService : IHostedService
                 return;
             }
 
-            await _botClient.SendTextMessageAsync(
-                chatId: chatId,
-                text: schedule,
-                parseMode: ParseMode.Html,
-                cancellationToken: cancellationToken);
+            foreach (var part in schedule)
+            {
+                await _botClient.SendTextMessageAsync(
+                    chatId: chatId,
+                    text: part,
+                    parseMode: ParseMode.Html,
+                    cancellationToken: cancellationToken);
+            }
         }
         catch (Exception ex)
         {

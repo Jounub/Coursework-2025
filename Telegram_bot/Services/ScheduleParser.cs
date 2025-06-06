@@ -38,7 +38,7 @@ public class ScheduleParser
         return buttons.Count > 0 ? new InlineKeyboardMarkup(buttons) : null;
     }
 
-    public async Task<string?> GetGroupScheduleAsync(string groupId, string groupTitle, DateTime startDate, DateTime endDate)
+    public async Task<List<string>?> GetGroupScheduleAsync(string groupId, string groupTitle, DateTime startDate, DateTime endDate)
     {
         if (string.IsNullOrEmpty(groupId))
             return null;
@@ -63,52 +63,108 @@ public class ScheduleParser
         }
     }
 
-    private string FormatSchedule(string json, string groupTitle, DateTime startDate, DateTime endDate)
+    private List<string> FormatSchedule(string json, string groupTitle, DateTime startDate, DateTime endDate)
     {
         try
         {
             var scheduleData = JsonConvert.DeserializeObject<ScheduleResponse>(json);
             if (scheduleData?.Events == null || !scheduleData.Events.Any())
-                return "Расписание не найдено";
+                return new List<string> { "Расписание не найдено" };
 
-            //Сортировка занятий по дате и времени
+            // Сортировка занятий по дате и времени
             List<Lesson> orderedList = scheduleData.Events.OrderBy(l => l.Date).ThenBy(l => l.TimeBegin).ToList();
 
-            var sb = new StringBuilder();
-            sb.AppendLine($"📆 Период: {startDate:dd.MM.yyyy} - {endDate:dd.MM.yyyy}");
-            sb.AppendLine($"📆 Группа: {groupTitle}");
+            var resultMessages = new List<string>();
+            var currentMessage = new StringBuilder();
+            var currentDay = (DateTime?)null;
+            var isFirstMessage = true;
+
+            // Добавляем заголовок только к первому сообщению
+            if (isFirstMessage)
+            {
+                currentMessage.AppendLine($"📆 Период: {startDate:dd.MM.yyyy} - {endDate:dd.MM.yyyy}");
+                currentMessage.AppendLine($"📆 Группа: {groupTitle}");
+                isFirstMessage = false;
+            }
 
             foreach (var lesson in orderedList)
             {
-                //Дату и число пишем в сообщении только если занятие первое в списке или дата текущего занятия не совпадает с датой предыдущего
-                if (orderedList.IndexOf(lesson) == 0 || lesson.Date != orderedList[orderedList.IndexOf(lesson) -1].Date)
+                var dayChanged = currentDay != lesson.Date;
+                currentDay = lesson.Date;
+
+                var dayContent = new StringBuilder();
+
+                // Добавляем дату только если это новый день
+                if (dayChanged)
                 {
-                    sb.AppendLine($"\n<b>📌 {lesson.Date:dddd, dd.MM.yyyy}</b>");
+                    dayContent.AppendLine($"\n<b>📌 {lesson.Date:dddd, dd.MM.yyyy}</b>");
                 }
 
-                sb.AppendLine($"\n🕒 <i>{lesson.TimeBegin:hh\\:mm} - {lesson.TimeEnd:hh\\:mm}</i>");
-                sb.AppendLine($"   <b>{lesson.Title}</b>");
+                dayContent.AppendLine($"\n🕒 <i>{lesson.TimeBegin:hh\\:mm} - {lesson.TimeEnd:hh\\:mm}</i>");
+                dayContent.AppendLine($"   <b>{lesson.Title}</b>");
 
                 if (!string.IsNullOrEmpty(lesson.TeacherName) &&
-                    (orderedList.IndexOf(lesson) == 0 || lesson.TeacherName != orderedList[orderedList.IndexOf(lesson) - 1].TeacherName))
-                        sb.AppendLine($"   👨‍🏫 {lesson.TeacherName}");
+                    (orderedList.IndexOf(lesson) == 0 ||
+                     lesson.TeacherName != orderedList[orderedList.IndexOf(lesson) - 1].TeacherName))
+                {
+                    dayContent.AppendLine($"   👨‍🏫 {lesson.TeacherName}");
+                }
 
-                //В расписании если AuditoryLocation=AuditoryTitle, то это онлайн занятие, адрес выводить не нужно
-                if (!string.IsNullOrEmpty(lesson.AuditoryTitle) && !string.IsNullOrEmpty(lesson.AuditoryLocation) && lesson.AuditoryTitle != lesson.AuditoryLocation)
-                    sb.AppendLine($"   🚪 {lesson.AuditoryLocation}, каб. {lesson.AuditoryTitle}");
-                else if(!string.IsNullOrEmpty(lesson.AuditoryTitle))
-                    sb.AppendLine($"   🚪 {lesson.AuditoryTitle}");
+                if (!string.IsNullOrEmpty(lesson.AuditoryTitle) &&
+                    !string.IsNullOrEmpty(lesson.AuditoryLocation) &&
+                    lesson.AuditoryTitle != lesson.AuditoryLocation)
+                {
+                    dayContent.AppendLine($"   🚪 {lesson.AuditoryLocation}, каб. {lesson.AuditoryTitle}");
+                }
+                else if (!string.IsNullOrEmpty(lesson.AuditoryTitle))
+                {
+                    dayContent.AppendLine($"   🚪 {lesson.AuditoryTitle}");
+                }
 
                 if (!string.IsNullOrEmpty(lesson.LoadType))
-                    sb.AppendLine($"   🏷 Тип: {lesson.LoadType}");
-                if(!string.IsNullOrEmpty(lesson.Comment))
-                    sb.AppendLine($"   💬 {lesson.Comment}");
+                    dayContent.AppendLine($"   🏷 Тип: {lesson.LoadType}");
+                if (!string.IsNullOrEmpty(lesson.Comment))
+                    dayContent.AppendLine($"   💬 {lesson.Comment}");
+
+                // Проверяем, поместится ли весь день в текущее сообщение
+                if (dayChanged && (currentMessage.Length + dayContent.Length > 4000))
+                {
+                    // Если текущее сообщение не пустое, сохраняем его
+                    if (currentMessage.Length > 0)
+                    {
+                        resultMessages.Add(currentMessage.ToString());
+                        currentMessage = new StringBuilder();
+                        // Добавляем заголовок периода только к первому сообщению
+                        currentMessage.AppendLine("Продолжение расписания:");
+                    }
+                    // Добавляем день в новое сообщение (даже если он один превышает лимит)
+                    currentMessage.Append(dayContent);
+                }
+                else
+                {
+                    currentMessage.Append(dayContent);
+                }
             }
-            return sb.ToString();
+
+            // Добавляем последнее сообщение, если оно не пустое
+            if (currentMessage.Length > 0)
+            {
+                resultMessages.Add(currentMessage.ToString());
+            }
+
+            // Добавляем нумерацию сообщений
+            if (resultMessages.Count > 1)
+            {
+                for (int i = 0; i < resultMessages.Count; i++)
+                {
+                    resultMessages[i] += $"\n\n📄 Страница {i + 1} из {resultMessages.Count}";
+                }
+            }
+            return resultMessages;
         }
         catch (Exception ex)
         {
-            return $"⚠ Ошибка форматирования расписания: {ex.Message}";
+            return new List<string> { $"⚠ Ошибка форматирования расписания: {ex.Message}" };
         }
     }
 
