@@ -175,10 +175,13 @@ public class TelegramBotService : IHostedService
     {
         if (callbackQuery.Data!.StartsWith("group_"))
         {
-            var groupId = callbackQuery.Data[6..];
+            var parts = callbackQuery.Data.Split('_');
+            var groupId = parts[1];
+            var groupTitle = parts[2];
             await HandleGroupSelection(
                 callbackQuery.Message!.Chat.Id,
                 groupId,
+                groupTitle,
                 callbackQuery.Id,
                 cancellationToken);
         }
@@ -187,9 +190,12 @@ public class TelegramBotService : IHostedService
             var parts = callbackQuery.Data.Split('_');
             var groupId = parts[1];
             var month = int.Parse(parts[2]);
+            var groupTitle = parts[3];
+
             await SendDaySelection(
                 callbackQuery.Message!.Chat.Id,
                 groupId,
+                groupTitle,
                 month,
                 cancellationToken);
         }
@@ -200,12 +206,14 @@ public class TelegramBotService : IHostedService
             var month = int.Parse(parts[2]);
             var day = int.Parse(parts[3]);
             var oneDay = int.Parse(parts[4]);
+            var groupTitle = parts[5];
 
             var selectedDate = new DateTime(DateTime.Now.Year, month, day);
             bool oneDaySchedule = Convert.ToBoolean(oneDay);
             await GetWeekSchedule(
                 callbackQuery.Message!.Chat.Id,
                 groupId,
+                groupTitle,
                 selectedDate,
                 cancellationToken,
                 oneDaySchedule);
@@ -219,6 +227,7 @@ public class TelegramBotService : IHostedService
     private async Task GetWeekSchedule(
         long chatId,
         string groupId,
+        string groupTitle,
         DateTime selectedDate,
         CancellationToken cancellationToken,
         bool oneDaySchedule)
@@ -236,7 +245,7 @@ public class TelegramBotService : IHostedService
                 endOfWeek = startOfWeek;
             else endOfWeek = startOfWeek.AddDays(6);
 
-            var schedule = await _scheduleParser.GetGroupScheduleAsync(groupId, startOfWeek, endOfWeek);
+            var schedule = await _scheduleParser.GetGroupScheduleAsync(groupId, groupTitle, startOfWeek, endOfWeek);
 
             if (string.IsNullOrEmpty(schedule))
             {
@@ -289,16 +298,17 @@ public class TelegramBotService : IHostedService
     private async Task HandleGroupSelection(
         long chatId,
         string groupId,
+        string groupTitle,
         string callbackQueryId,
         CancellationToken cancellationToken)
     {
         try
         {
-            await SendMonthSelection(chatId, groupId, cancellationToken);
+            await SendMonthSelection(chatId, groupId, groupTitle, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Error in group selection for group {groupId}");
+            _logger.LogError(ex, $"Error in group selection for group {groupTitle}");
             await _botClient.SendTextMessageAsync(
                 chatId: chatId,
                 text: "⚠ Ошибка при выборе группы",
@@ -306,7 +316,7 @@ public class TelegramBotService : IHostedService
         }
     }
 
-    private async Task SendMonthSelection(long chatId, string groupId, CancellationToken ct)
+    private async Task SendMonthSelection(long chatId, string groupId, string groupTitle, CancellationToken ct)
     {
         var currentDate = DateTime.Now;
         var buttons = new List<InlineKeyboardButton[]>();
@@ -318,7 +328,7 @@ public class TelegramBotService : IHostedService
             {
                 InlineKeyboardButton.WithCallbackData(
                     monthName,
-                    $"month_{groupId}_{i}")
+                    $"month_{groupId}_{i}_{groupTitle}")
             });
         }
 
@@ -326,12 +336,12 @@ public class TelegramBotService : IHostedService
 
         await _botClient.SendTextMessageAsync(
             chatId: chatId,
-            text: $"Выберите месяц для группы {groupId}:",
+            text: $"Выберите месяц для группы {groupTitle}:",
             replyMarkup: keyboard,
             cancellationToken: ct);
     }
 
-    private async Task SendDaySelection(long chatId, string groupId, int month, CancellationToken ct)
+    private async Task SendDaySelection(long chatId, string groupId, string groupTitle, int month, CancellationToken ct)
     {
         var currentDate = DateTime.Now;
         var daysInMonth = DateTime.DaysInMonth(currentDate.Year, month);
@@ -343,7 +353,7 @@ public class TelegramBotService : IHostedService
         {
             row.Add(InlineKeyboardButton.WithCallbackData(
                 day.ToString(),
-                $"day_{groupId}_{month}_{day}_0"));
+                $"day_{groupId}_{month}_{day}_0_{groupTitle}"));
 
             if (row.Count == 7 || day == daysInMonth)
             {
@@ -351,8 +361,8 @@ public class TelegramBotService : IHostedService
                 row.Clear();
             }
         }
-        row.Add(InlineKeyboardButton.WithCallbackData("Сегодня", $"day_{groupId}_{DateTime.Today.Month}_{DateTime.Today.Day}_1"));
-        row.Add(InlineKeyboardButton.WithCallbackData("Завтра", $"day_{groupId}_{DateTime.Today.Month}_{DateTime.Today.AddDays(1).Day}_1"));
+        row.Add(InlineKeyboardButton.WithCallbackData("Сегодня", $"day_{groupId}_{DateTime.Today.Month}_{DateTime.Today.Day}_1_{groupTitle}"));
+        row.Add(InlineKeyboardButton.WithCallbackData("Завтра", $"day_{groupId}_{DateTime.Today.Month}_{DateTime.Today.AddDays(1).Day}_1_{groupTitle}"));
         buttons.Add(row.ToArray());
         row.Clear();
 

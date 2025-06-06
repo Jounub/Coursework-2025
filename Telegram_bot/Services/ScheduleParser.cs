@@ -30,7 +30,7 @@ public class ScheduleParser
             if (group.Id == null || group.Title == null)
                 return null;
 
-            return new[] { InlineKeyboardButton.WithCallbackData(group.Title, $"group_{group.Id}") };
+            return new[] { InlineKeyboardButton.WithCallbackData(group.Title, $"group_{group.Id}_{group.Title}") };
         })
         .Where(button => button != null)
         .ToList();
@@ -38,7 +38,7 @@ public class ScheduleParser
         return buttons.Count > 0 ? new InlineKeyboardMarkup(buttons) : null;
     }
 
-    public async Task<string?> GetGroupScheduleAsync(string groupId, DateTime startDate, DateTime endDate)
+    public async Task<string?> GetGroupScheduleAsync(string groupId, string groupTitle, DateTime startDate, DateTime endDate)
     {
         if (string.IsNullOrEmpty(groupId))
             return null;
@@ -55,7 +55,7 @@ public class ScheduleParser
                 return null;
 
             var json = await response.Content.ReadAsStringAsync();
-            return FormatSchedule(json, startDate, endDate);
+            return FormatSchedule(json, groupTitle, startDate, endDate);
         }
         catch
         {
@@ -63,7 +63,7 @@ public class ScheduleParser
         }
     }
 
-    private string FormatSchedule(string json, DateTime startDate, DateTime endDate)
+    private string FormatSchedule(string json, string groupTitle, DateTime startDate, DateTime endDate)
     {
         try
         {
@@ -76,6 +76,7 @@ public class ScheduleParser
 
             var sb = new StringBuilder();
             sb.AppendLine($"📆 Период: {startDate:dd.MM.yyyy} - {endDate:dd.MM.yyyy}");
+            sb.AppendLine($"📆 Группа: {groupTitle}");
 
             foreach (var lesson in orderedList)
             {
@@ -111,7 +112,6 @@ public class ScheduleParser
     // Модели для десериализации JSON
     private class ScheduleResponse
     {
-        public string Title { get; set; } = string.Empty;
         public List<Lesson> Events { get; set; } = new();
     }
 
@@ -120,7 +120,6 @@ public class ScheduleParser
         public string Title { get; set; } = string.Empty;
         public DateTime Date { get; set; }
         public string LoadType { get; set; } = string.Empty;
-        public string TeacherName { get; set; } = string.Empty;
         public string AuditoryTitle { get; set; } = string.Empty;
         public TimeSpan TimeBegin { get; set; }
         public TimeSpan TimeEnd { get; set; }
