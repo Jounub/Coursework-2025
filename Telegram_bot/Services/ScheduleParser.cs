@@ -1,12 +1,8 @@
 ﻿#nullable enable
 
-using HtmlAgilityPack;
 using Newtonsoft.Json;
-using System.Net;
 using System.Text;
 using Telegram.Bot.Types.ReplyMarkups;
-using Microsoft.Extensions.Logging;
-using System.Text.Json;
 
 namespace test.Services;
 
@@ -89,12 +85,6 @@ public class ScheduleParser
                     sb.AppendLine($"\n<b>📌 {lesson.Date:dddd, dd.MM.yyyy}</b>");
                 }
 
-                if (lesson.Title == null || !lesson.Title.Any())
-                {
-                    sb.AppendLine("   🎉 Выходной");
-                    continue;
-                }
-
                 sb.AppendLine($"\n🕒 <i>{lesson.TimeBegin:hh\\:mm} - {lesson.TimeEnd:hh\\:mm}</i>");
                 sb.AppendLine($"   <b>{lesson.Title}</b>");
 
@@ -106,6 +96,8 @@ public class ScheduleParser
 
                 if (!string.IsNullOrEmpty(lesson.LoadType))
                     sb.AppendLine($"   🏷 Тип: {lesson.LoadType}");
+                if(!string.IsNullOrEmpty(lesson.Comment))
+                    sb.AppendLine($"   💬 {lesson.Comment}");
             }
 
             return sb.ToString();
@@ -133,6 +125,7 @@ public class ScheduleParser
         public TimeSpan TimeBegin { get; set; }
         public TimeSpan TimeEnd { get; set; }
         public string AuditoryLocation { get; set; } = string.Empty;
+        public string Comment {  get; set; } = string.Empty;
     }
 
     private class GroupInfo
