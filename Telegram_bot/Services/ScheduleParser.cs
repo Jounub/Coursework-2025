@@ -89,6 +89,10 @@ public class ScheduleParser
                 sb.AppendLine($"\n🕒 <i>{lesson.TimeBegin:hh\\:mm} - {lesson.TimeEnd:hh\\:mm}</i>");
                 sb.AppendLine($"   <b>{lesson.Title}</b>");
 
+                if (!string.IsNullOrEmpty(lesson.TeacherName) &&
+                    (orderedList.IndexOf(lesson) == 0 || lesson.TeacherName != orderedList[orderedList.IndexOf(lesson) - 1].TeacherName))
+                        sb.AppendLine($"   👨‍🏫 {lesson.TeacherName}");
+
                 //В расписании если AuditoryLocation=AuditoryTitle, то это онлайн занятие, адрес выводить не нужно
                 if (!string.IsNullOrEmpty(lesson.AuditoryTitle) && !string.IsNullOrEmpty(lesson.AuditoryLocation) && lesson.AuditoryTitle != lesson.AuditoryLocation)
                     sb.AppendLine($"   🚪 {lesson.AuditoryLocation}, каб. {lesson.AuditoryTitle}");
@@ -100,7 +104,6 @@ public class ScheduleParser
                 if(!string.IsNullOrEmpty(lesson.Comment))
                     sb.AppendLine($"   💬 {lesson.Comment}");
             }
-
             return sb.ToString();
         }
         catch (Exception ex)
@@ -123,6 +126,7 @@ public class ScheduleParser
         public string AuditoryTitle { get; set; } = string.Empty;
         public TimeSpan TimeBegin { get; set; }
         public TimeSpan TimeEnd { get; set; }
+        public string TeacherName { get; set; } = string.Empty;
         public string AuditoryLocation { get; set; } = string.Empty;
         public string Comment {  get; set; } = string.Empty;
     }
