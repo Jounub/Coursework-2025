@@ -101,7 +101,7 @@ public class ScheduleParser
                 }
 
                 dayContent.AppendLine($"\n🕒 <i>{lesson.TimeBegin:hh\\:mm} - {lesson.TimeEnd:hh\\:mm}</i>");
-                dayContent.AppendLine($"   <b>{lesson.Title}</b>");
+                dayContent.AppendLine($"    <b>{lesson.PairNumber}. {lesson.Title}</b>");
 
                 if (!string.IsNullOrEmpty(lesson.TeacherName) &&
                     (orderedList.IndexOf(lesson) == 0 ||
@@ -185,6 +185,7 @@ public class ScheduleParser
         public string TeacherName { get; set; } = string.Empty;
         public string AuditoryLocation { get; set; } = string.Empty;
         public string Comment {  get; set; } = string.Empty;
+        public string PairNumber { get; set; } = string.Empty;
     }
 
     private class GroupInfo
