@@ -29,12 +29,12 @@ public class TelegramBotService : IHostedService
         _scheduleParser = scheduleParser;
     }
 
-
     private readonly Dictionary<long, UserState> _userStates = new();
     private enum UserState
     {
         None,
-        AwaitingGroupSearch
+        AwaitingGroupSearch,
+        AwaitingTeacherSearch
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -93,42 +93,48 @@ public class TelegramBotService : IHostedService
 
         var chatId = message.Chat.Id;
 
-        // Обработка команды /start
         if (messageText.StartsWith("/start"))
         {
             await SendWelcomeMessage(chatId, cancellationToken);
             return;
         }
 
-        // Обработка команды /search (без группы)
         if (messageText.Equals("/search", StringComparison.OrdinalIgnoreCase))
         {
-            _userStates[chatId] = UserState.AwaitingGroupSearch; // Устанавливаем состояние
-            await _botClient.SendTextMessageAsync(
-                chatId: chatId,
-                text: "🔍 Введите номер группы (например, РИЗ-220501):",
-                cancellationToken: cancellationToken);
+            await SendSearchOptions(chatId, cancellationToken);
             return;
         }
 
-        // Если пользователь в состоянии "ожидает ввода группы"
-        if (_userStates.TryGetValue(chatId, out var state) && state == UserState.AwaitingGroupSearch)
+        if (_userStates.TryGetValue(chatId, out var state))
         {
-            _userStates.Remove(chatId); // Сбрасываем состояние
-            await HandleGroupSearch(chatId, messageText, cancellationToken); // Ищем группу
+            _userStates.Remove(chatId);
+
+            if (state == UserState.AwaitingGroupSearch)
+            {
+                await HandleGroupSearch(chatId, messageText, cancellationToken);
+            }
+            else if (state == UserState.AwaitingTeacherSearch)
+            {
+                await HandleTeacherSearch(chatId, messageText, cancellationToken);
+            }
             return;
         }
 
-        // Обработка прямого ввода номера группы
         if (IsPotentialGroupName(messageText))
         {
             await HandleGroupSearch(chatId, messageText, cancellationToken);
             return;
         }
 
+        if (IsPotentialTeacherName(messageText))
+        {
+            await HandleTeacherSearch(chatId, messageText, cancellationToken);
+            return;
+        }
+
         await _botClient.SendTextMessageAsync(
             chatId: chatId,
-            text: "Используйте /search для поиска группы или введите номер группы",
+            text: "Используйте /start для выбора типа поиска или введите номер группы/ФИО преподавателя",
             cancellationToken: cancellationToken);
     }
 
@@ -136,16 +142,33 @@ public class TelegramBotService : IHostedService
     {
         var welcomeText = @"📚 <b>Бот расписания УрФУ</b>
 
-Для поиска расписания используйте:
-/search [номер группы]  
-Пример: /search РИЗ-220501
-
-Или просто введите номер группы";
+Для поиска используйте:
+/search - выбор типа поиска
+[номер группы] - прямой поиск группы
+[ФИО преподавателя] - прямой поиск преподавателя";
 
         await _botClient.SendTextMessageAsync(
             chatId: chatId,
             text: welcomeText,
             parseMode: ParseMode.Html,
+            cancellationToken: ct);
+    }
+
+    private async Task SendSearchOptions(long chatId, CancellationToken ct)
+    {
+        var keyboard = new InlineKeyboardMarkup(new[]
+        {
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData("🔍 Поиск группы", "search_group"),
+                InlineKeyboardButton.WithCallbackData("👨‍🏫 Поиск преподавателя", "search_teacher")
+            }
+        });
+
+        await _botClient.SendTextMessageAsync(
+            chatId: chatId,
+            text: "Выберите тип поиска:",
+            replyMarkup: keyboard,
             cancellationToken: ct);
     }
 
@@ -180,10 +203,49 @@ public class TelegramBotService : IHostedService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Search error");
+            _logger.LogError(ex, "Group search error");
             await _botClient.SendTextMessageAsync(
                 chatId: chatId,
-                text: "⚠ Ошибка при поиске. Попробуйте позже.",
+                text: "⚠ Ошибка при поиске группы. Попробуйте позже.",
+                cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task HandleTeacherSearch(
+        long chatId,
+        string searchQuery,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _botClient.SendChatActionAsync(
+                chatId: chatId,
+                chatAction: ChatAction.Typing,
+                cancellationToken: cancellationToken);
+
+            var keyboard = await _scheduleParser.SearchTeachersAsync(searchQuery);
+
+            if (keyboard == null)
+            {
+                await _botClient.SendTextMessageAsync(
+                    chatId: chatId,
+                    text: "Преподаватели не найдены. Проверьте правильность запроса.",
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
+            await _botClient.SendTextMessageAsync(
+                chatId: chatId,
+                text: "🔍 Найденные преподаватели:",
+                replyMarkup: keyboard,
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Teacher search error");
+            await _botClient.SendTextMessageAsync(
+                chatId: chatId,
+                text: "⚠ Ошибка при поиске преподавателя. Попробуйте позже.",
                 cancellationToken: cancellationToken);
         }
     }
@@ -192,7 +254,23 @@ public class TelegramBotService : IHostedService
         CallbackQuery callbackQuery,
         CancellationToken cancellationToken)
     {
-        if (callbackQuery.Data!.StartsWith("group_"))
+        if (callbackQuery.Data == "search_group")
+        {
+            _userStates[callbackQuery.Message!.Chat.Id] = UserState.AwaitingGroupSearch;
+            await _botClient.SendTextMessageAsync(
+                chatId: callbackQuery.Message.Chat.Id,
+                text: "🔍 Введите номер группы (например, РИЗ-220501):",
+                cancellationToken: cancellationToken);
+        }
+        else if (callbackQuery.Data == "search_teacher")
+        {
+            _userStates[callbackQuery.Message!.Chat.Id] = UserState.AwaitingTeacherSearch;
+            await _botClient.SendTextMessageAsync(
+                chatId: callbackQuery.Message.Chat.Id,
+                text: "🔍 Введите ФИО преподавателя:",
+                cancellationToken: cancellationToken);
+        }
+        else if (callbackQuery.Data!.StartsWith("group_"))
         {
             var parts = callbackQuery.Data.Split('_');
             var groupId = parts[1];
@@ -204,18 +282,46 @@ public class TelegramBotService : IHostedService
                 callbackQuery.Id,
                 cancellationToken);
         }
+        else if (callbackQuery.Data!.StartsWith("tchr_"))
+        {
+            var parts = callbackQuery.Data.Split('_');
+            string teacherId = parts[1];
+            var teacherName = parts[2];
+            await HandleTeacherSelection(
+                callbackQuery.Message!.Chat.Id,
+                teacherId,
+                teacherName,
+                callbackQuery.Id,
+                cancellationToken);
+        }
         else if (callbackQuery.Data!.StartsWith("month_"))
         {
             var parts = callbackQuery.Data.Split('_');
-            var groupId = parts[1];
+            var id = parts[1];
             var month = int.Parse(parts[2]);
-            var groupTitle = parts[3];
-
+            var name = parts[3];
+            var isTeacher = false;
             await SendDaySelection(
                 callbackQuery.Message!.Chat.Id,
-                groupId,
-                groupTitle,
+                id,
+                //name,
                 month,
+                isTeacher,
+                cancellationToken);
+        }
+        else if (callbackQuery.Data!.StartsWith("teacher_month_"))
+        {
+            var parts = callbackQuery.Data.Split('_');
+            var id = parts[2];
+            var month = int.Parse(parts[3]);
+            //var name = parts[4];
+            var isTeacher = true;
+            await SendDaySelection(
+                callbackQuery.Message!.Chat.Id,
+                id,
+                //name,
+                month,
+                isTeacher,
                 cancellationToken);
         }
         else if (callbackQuery.Data!.StartsWith("day_"))
@@ -226,13 +332,30 @@ public class TelegramBotService : IHostedService
             var day = int.Parse(parts[3]);
             var oneDay = int.Parse(parts[4]);
             var groupTitle = parts[5];
-
             var selectedDate = new DateTime(DateTime.Now.Year, month, day);
             bool oneDaySchedule = Convert.ToBoolean(oneDay);
             await GetWeekSchedule(
                 callbackQuery.Message!.Chat.Id,
                 groupId,
                 groupTitle,
+                selectedDate,
+                cancellationToken,
+                oneDaySchedule);
+        }
+        else if (callbackQuery.Data!.StartsWith("teacher_day_"))
+        {
+            var parts = callbackQuery.Data.Split('_');
+            var teacherId = parts[2];
+            var month = int.Parse(parts[3]);
+            var day = int.Parse(parts[4]);
+            var oneDay = int.Parse(parts[5]);
+            //var teacherName = parts[6];
+            var selectedDate = new DateTime(DateTime.Now.Year, month, day);
+            bool oneDaySchedule = Convert.ToBoolean(oneDay);
+            await GetTeacherWeekSchedule(
+                callbackQuery.Message!.Chat.Id,
+                teacherId,
+                //teacherName,
                 selectedDate,
                 cancellationToken,
                 oneDaySchedule);
@@ -259,10 +382,7 @@ public class TelegramBotService : IHostedService
                 cancellationToken: cancellationToken);
 
             var startOfWeek = selectedDate;
-            DateTime endOfWeek;
-            if (oneDaySchedule)
-                endOfWeek = startOfWeek;
-            else endOfWeek = startOfWeek.AddDays(6);
+            DateTime endOfWeek = oneDaySchedule ? startOfWeek : startOfWeek.AddDays(6);
 
             var schedule = await _scheduleParser.GetGroupScheduleAsync(groupId, groupTitle, startOfWeek, endOfWeek);
 
@@ -286,10 +406,55 @@ public class TelegramBotService : IHostedService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Schedule load error for group {groupId}");
+            _logger.LogError(ex, $"Group schedule load error for {groupTitle}");
             await _botClient.SendTextMessageAsync(
                 chatId: chatId,
-                text: "⚠ Ошибка при загрузке расписания",
+                text: "⚠ Ошибка при загрузке расписания группы",
+                cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task GetTeacherWeekSchedule(
+        long chatId,
+        string teacherId,
+        //string teacherName,
+        DateTime selectedDate,
+        CancellationToken cancellationToken,
+        bool oneDaySchedule)
+    {
+        try
+        {
+            await _botClient.SendChatActionAsync(
+                chatId: chatId,
+                chatAction: ChatAction.Typing,
+                cancellationToken: cancellationToken);
+
+            var startOfWeek = selectedDate;
+            DateTime endOfWeek = oneDaySchedule ? startOfWeek : startOfWeek.AddDays(6);
+
+            var schedule = await _scheduleParser.GetTeacherScheduleAsync(teacherId, startOfWeek, endOfWeek);
+
+            if (string.IsNullOrEmpty(schedule))
+            {
+                await _botClient.SendTextMessageAsync(
+                    chatId: chatId,
+                    text: "Не удалось загрузить расписание для выбранного преподавателя",
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
+            await _botClient.SendTextMessageAsync(
+                chatId: chatId,
+                text: schedule,
+                parseMode: ParseMode.Html,
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Teacher schedule load error");
+            await _botClient.SendTextMessageAsync(
+                chatId: chatId,
+                text: "⚠ Ошибка при загрузке расписания преподавателя",
                 cancellationToken: cancellationToken);
         }
     }
@@ -299,6 +464,13 @@ public class TelegramBotService : IHostedService
         return input.Length >= 5 &&
                input.Any(char.IsLetter) &&
                input.Any(char.IsDigit);
+    }
+
+    private bool IsPotentialTeacherName(string input)
+    {
+        return input.Any(char.IsWhiteSpace) &&
+               input.Any(char.IsLetter) &&
+               input.Length >= 5;
     }
 
     private Task HandleErrorAsync(
@@ -326,11 +498,11 @@ public class TelegramBotService : IHostedService
     {
         try
         {
-            await SendMonthSelection(chatId, groupId, groupTitle, cancellationToken);
+            await SendMonthSelection(chatId, groupId, groupTitle, false, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Error in group selection for group {groupTitle}");
+            _logger.LogError(ex, $"Error in group selection for {groupTitle}");
             await _botClient.SendTextMessageAsync(
                 chatId: chatId,
                 text: "⚠ Ошибка при выборе группы",
@@ -338,7 +510,33 @@ public class TelegramBotService : IHostedService
         }
     }
 
-    private async Task SendMonthSelection(long chatId, string groupId, string groupTitle, CancellationToken ct)
+    private async Task HandleTeacherSelection(
+        long chatId,
+        string teacherId,
+        string teacherName,
+        string callbackQueryId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await SendMonthSelection(chatId, teacherId, teacherName, true, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error in teacher selection for {teacherName}");
+            await _botClient.SendTextMessageAsync(
+                chatId: chatId,
+                text: "⚠ Ошибка при выборе преподавателя",
+                cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task SendMonthSelection(
+        long chatId,
+        string id,
+        string name,
+        bool isTeacher,
+        CancellationToken ct)
     {
         var currentDate = DateTime.Now;
         var buttons = new List<InlineKeyboardButton[]>();
@@ -346,24 +544,34 @@ public class TelegramBotService : IHostedService
         for (int i = 1; i <= 12; i++)
         {
             var monthName = new DateTime(currentDate.Year, i, 1).ToString("MMMM");
+            var prefix = isTeacher ? "teacher_month" : "month";
             buttons.Add(new[]
             {
                 InlineKeyboardButton.WithCallbackData(
                     monthName,
-                    $"month_{groupId}_{i}_{groupTitle}")
+                    $"{prefix}_{id}_{i}")
             });
         }
 
         var keyboard = new InlineKeyboardMarkup(buttons);
+        var text = isTeacher
+            ? $"Выберите месяц для преподавателя {name}:"
+            : $"Выберите месяц для группы {name}:";
 
         await _botClient.SendTextMessageAsync(
             chatId: chatId,
-            text: $"Выберите месяц для группы {groupTitle}:",
+            text: text,
             replyMarkup: keyboard,
             cancellationToken: ct);
     }
 
-    private async Task SendDaySelection(long chatId, string groupId, string groupTitle, int month, CancellationToken ct)
+    private async Task SendDaySelection(
+        long chatId,
+        string id,
+        //string name,
+        int month,
+        bool isTeacher,
+        CancellationToken ct)
     {
         var currentDate = DateTime.Now;
         var daysInMonth = DateTime.DaysInMonth(currentDate.Year, month);
@@ -373,9 +581,10 @@ public class TelegramBotService : IHostedService
 
         for (int day = 1; day <= daysInMonth; day++)
         {
+            var prefix = isTeacher ? "teacher_day" : "day";
             row.Add(InlineKeyboardButton.WithCallbackData(
                 day.ToString(),
-                $"day_{groupId}_{month}_{day}_0_{groupTitle}"));
+                $"{prefix}_{id}_{month}_{day}_0"));
 
             if (row.Count == 7 || day == daysInMonth)
             {
@@ -383,10 +592,20 @@ public class TelegramBotService : IHostedService
                 row.Clear();
             }
         }
-        row.Add(InlineKeyboardButton.WithCallbackData("Сегодня", $"day_{groupId}_{DateTime.Today.Month}_{DateTime.Today.Day}_1_{groupTitle}"));
-        row.Add(InlineKeyboardButton.WithCallbackData("Завтра", $"day_{groupId}_{DateTime.Today.Month}_{DateTime.Today.AddDays(1).Day}_1_{groupTitle}"));
+
+        var todayPrefix = isTeacher ? "teacher_day" : "day";
+        var todayText = isTeacher ? "Сегодня (преподаватель)" : "Сегодня";
+        var tomorrowText = isTeacher ? "Завтра (преподаватель)" : "Завтра";
+
+        row.Add(InlineKeyboardButton.WithCallbackData(
+            todayText,
+            $"{todayPrefix}_{id}_{DateTime.Today.Month}_{DateTime.Today.Day}_1"));
+
+        row.Add(InlineKeyboardButton.WithCallbackData(
+            tomorrowText,
+            $"{todayPrefix}_{id}_{DateTime.Today.Month}_{DateTime.Today.AddDays(1).Day}_1"));
+
         buttons.Add(row.ToArray());
-        row.Clear();
 
         var keyboard = new InlineKeyboardMarkup(buttons);
 

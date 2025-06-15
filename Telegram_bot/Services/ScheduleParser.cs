@@ -8,12 +8,13 @@ namespace test.Services;
 
 public class ScheduleParser
 {
-    private const string ApiUrl = "https://urfu.ru/api/v2/schedule/groups";
+    private const string GroupsApiUrl = "https://urfu.ru/api/v2/schedule/groups";
+    private const string TeachersApiUrl = "https://urfu.ru/api/v2/schedule/teachers";
 
     public async Task<InlineKeyboardMarkup?> SearchGroupsAsync(string searchQuery)
     {
         using var httpClient = new HttpClient();
-        var response = await httpClient.GetAsync($"{ApiUrl}?search={Uri.EscapeDataString(searchQuery)}");
+        var response = await httpClient.GetAsync($"{GroupsApiUrl}?search={Uri.EscapeDataString(searchQuery)}");
 
         if (!response.IsSuccessStatusCode)
             return null;
@@ -24,7 +25,6 @@ public class ScheduleParser
         if (groups == null || !groups.Any())
             return null;
 
-        // Создаем кнопки (максимум 10 групп)
         var buttons = groups.Take(10).Select(group =>
         {
             if (group.Id == null || group.Title == null)
@@ -38,12 +38,39 @@ public class ScheduleParser
         return buttons.Count > 0 ? new InlineKeyboardMarkup(buttons) : null;
     }
 
+    public async Task<InlineKeyboardMarkup?> SearchTeachersAsync(string searchQuery)
+    {
+        using var httpClient = new HttpClient();
+        var response = await httpClient.GetAsync($"{TeachersApiUrl}?search={Uri.EscapeDataString(searchQuery)}");
+
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var json = await response.Content.ReadAsStringAsync();
+        var teachers = JsonConvert.DeserializeObject<List<TeacherInfo>>(json);
+
+        if (teachers == null || !teachers.Any())
+            return null;
+
+        var buttons = teachers.Take(10).Select(teacher =>
+        {
+            if (teacher.Id == null || teacher.Name == null)
+                return null;
+            string name = ShortenFullName(teacher.Name);
+            return new[] { InlineKeyboardButton.WithCallbackData(teacher.Name, $"tchr_{teacher.Id}_{name}") };
+        })
+        .Where(button => button != null)
+        .ToList();
+
+        return buttons.Count > 0 ? new InlineKeyboardMarkup(buttons) : null;
+    }
+
     public async Task<List<string>?> GetGroupScheduleAsync(string groupId, string groupTitle, DateTime startDate, DateTime endDate)
     {
         if (string.IsNullOrEmpty(groupId))
             return null;
 
-        var url = $"https://urfu.ru/api/v2/schedule/groups/{groupId}/schedule?" +
+        var url = $"{GroupsApiUrl}/{groupId}/schedule?" +
                   $"date_gte={startDate:yyyy-MM-dd}&date_lte={endDate:yyyy-MM-dd}";
 
         using var httpClient = new HttpClient();
@@ -55,7 +82,7 @@ public class ScheduleParser
                 return null;
 
             var json = await response.Content.ReadAsStringAsync();
-            return FormatSchedule(json, groupTitle, startDate, endDate);
+            return FormatGroupSchedule(json, groupTitle, startDate, endDate);
         }
         catch
         {
@@ -63,7 +90,32 @@ public class ScheduleParser
         }
     }
 
-    private List<string> FormatSchedule(string json, string groupTitle, DateTime startDate, DateTime endDate)
+    public async Task<string?> GetTeacherScheduleAsync(string teacherId, DateTime startDate, DateTime endDate)
+    {
+        if (string.IsNullOrEmpty(teacherId))
+            return null;
+
+        var url = $"{TeachersApiUrl}/{teacherId}/schedule?" +
+                  $"date_gte={startDate:yyyy-MM-dd}&date_lte={endDate:yyyy-MM-dd}";
+
+        using var httpClient = new HttpClient();
+
+        try
+        {
+            var response = await httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            var json = await response.Content.ReadAsStringAsync();
+            return FormatTeacherSchedule(json, startDate, endDate);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private List<string> FormatGroupSchedule(string json, string groupTitle, DateTime startDate, DateTime endDate)
     {
         try
         {
@@ -167,8 +219,69 @@ public class ScheduleParser
             return new List<string> { $"⚠ Ошибка форматирования расписания: {ex.Message}" };
         }
     }
+    private string FormatTeacherSchedule(string json, DateTime startDate, DateTime endDate)
+    {
+        try
+        {
+            var scheduleData = JsonConvert.DeserializeObject<ScheduleResponse>(json);
+            if (scheduleData?.Events == null || !scheduleData.Events.Any())
+                return "Расписание не найдено";
 
-    // Модели для десериализации JSON
+            List<Lesson> orderedList = scheduleData.Events.OrderBy(l => l.Date).ThenBy(l => l.TimeBegin).ToList();
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"📆 Период: {startDate:dd.MM.yyyy} - {endDate:dd.MM.yyyy}");
+
+            foreach (var lesson in orderedList)
+            {
+                if (orderedList.IndexOf(lesson) == 0 || lesson.Date != orderedList[orderedList.IndexOf(lesson) - 1].Date)
+                {
+                    sb.AppendLine($"\n<b>📌 {lesson.Date:dddd, dd.MM.yyyy}</b>");
+                }
+
+                sb.AppendLine($"\n🕒 <i>{lesson.TimeBegin:hh\\:mm} - {lesson.TimeEnd:hh\\:mm}</i>");
+                sb.AppendLine($"   <b>{lesson.Title}</b>");
+                sb.AppendLine($"   👥 Группа: {lesson.GroupName}");
+
+                if (!string.IsNullOrEmpty(lesson.AuditoryTitle) && !string.IsNullOrEmpty(lesson.AuditoryLocation) && lesson.AuditoryTitle != lesson.AuditoryLocation)
+                    sb.AppendLine($"   🚪 {lesson.AuditoryLocation}, каб. {lesson.AuditoryTitle}");
+                else if (!string.IsNullOrEmpty(lesson.AuditoryTitle))
+                    sb.AppendLine($"   🚪 {lesson.AuditoryTitle}");
+
+                if (!string.IsNullOrEmpty(lesson.LoadType))
+                    sb.AppendLine($"   🏷 Тип: {lesson.LoadType}");
+                if (!string.IsNullOrEmpty(lesson.Comment))
+                    sb.AppendLine($"   💬 {lesson.Comment}");
+            }
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"⚠ Ошибка форматирования расписания: {ex.Message}";
+        }
+    }
+
+    public static string ShortenFullName(string fullName)
+    {
+        if (string.IsNullOrWhiteSpace(fullName))
+            return fullName;
+
+        var parts = fullName.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0)
+            return fullName;
+
+        var result = new StringBuilder(parts[0]); // Фамилия
+
+        if (parts.Length > 1)
+            result.Append(" ").Append(parts[1][0]).Append("."); // Имя (первая буква)
+
+        if (parts.Length > 2)
+            result.Append(parts[2][0]).Append("."); // Отчество (первая буква)
+
+        return result.ToString();
+    }
+
     private class ScheduleResponse
     {
         public List<Lesson> Events { get; set; } = new();
@@ -184,7 +297,8 @@ public class ScheduleParser
         public TimeSpan TimeEnd { get; set; }
         public string TeacherName { get; set; } = string.Empty;
         public string AuditoryLocation { get; set; } = string.Empty;
-        public string Comment {  get; set; } = string.Empty;
+        public string Comment { get; set; } = string.Empty;
+        public string GroupName { get; set; } = string.Empty;
         public string PairNumber { get; set; } = string.Empty;
     }
 
@@ -192,5 +306,11 @@ public class ScheduleParser
     {
         public string Id { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
+    }
+
+    private class TeacherInfo
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
     }
 }
