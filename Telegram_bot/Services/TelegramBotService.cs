@@ -299,7 +299,7 @@ public class TelegramBotService : IHostedService
             var parts = callbackQuery.Data.Split('_');
             var id = parts[1];
             var month = int.Parse(parts[2]);
-            var name = parts[3];
+            //var name = parts[3];
             var isTeacher = false;
             await SendDaySelection(
                 callbackQuery.Message!.Chat.Id,
@@ -331,13 +331,13 @@ public class TelegramBotService : IHostedService
             var month = int.Parse(parts[2]);
             var day = int.Parse(parts[3]);
             var oneDay = int.Parse(parts[4]);
-            var groupTitle = parts[5];
+            //var groupTitle = parts[5];
             var selectedDate = new DateTime(DateTime.Now.Year, month, day);
             bool oneDaySchedule = Convert.ToBoolean(oneDay);
             await GetWeekSchedule(
                 callbackQuery.Message!.Chat.Id,
                 groupId,
-                groupTitle,
+                //groupTitle,
                 selectedDate,
                 cancellationToken,
                 oneDaySchedule);
@@ -369,7 +369,7 @@ public class TelegramBotService : IHostedService
     private async Task GetWeekSchedule(
         long chatId,
         string groupId,
-        string groupTitle,
+        //string groupTitle,
         DateTime selectedDate,
         CancellationToken cancellationToken,
         bool oneDaySchedule)
@@ -384,7 +384,7 @@ public class TelegramBotService : IHostedService
             var startOfWeek = selectedDate;
             DateTime endOfWeek = oneDaySchedule ? startOfWeek : startOfWeek.AddDays(6);
 
-            var schedule = await _scheduleParser.GetGroupScheduleAsync(groupId, groupTitle, startOfWeek, endOfWeek);
+            var schedule = await _scheduleParser.GetGroupScheduleAsync(groupId, startOfWeek, endOfWeek);
 
             if (schedule == null || !schedule.Any())
             {
@@ -406,7 +406,7 @@ public class TelegramBotService : IHostedService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Group schedule load error for {groupTitle}");
+            _logger.LogError(ex, $"Group schedule load error");
             await _botClient.SendTextMessageAsync(
                 chatId: chatId,
                 text: "⚠ Ошибка при загрузке расписания группы",

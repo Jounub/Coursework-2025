@@ -65,7 +65,7 @@ public class ScheduleParser
         return buttons.Count > 0 ? new InlineKeyboardMarkup(buttons) : null;
     }
 
-    public async Task<List<string>?> GetGroupScheduleAsync(string groupId, string groupTitle, DateTime startDate, DateTime endDate)
+    public async Task<List<string>?> GetGroupScheduleAsync(string groupId, DateTime startDate, DateTime endDate)
     {
         if (string.IsNullOrEmpty(groupId))
             return null;
@@ -82,7 +82,7 @@ public class ScheduleParser
                 return null;
 
             var json = await response.Content.ReadAsStringAsync();
-            return FormatGroupSchedule(json, groupTitle, startDate, endDate);
+            return FormatGroupSchedule(json, startDate, endDate);
         }
         catch
         {
@@ -115,7 +115,7 @@ public class ScheduleParser
         }
     }
 
-    private List<string> FormatGroupSchedule(string json, string groupTitle, DateTime startDate, DateTime endDate)
+    private List<string> FormatGroupSchedule(string json, DateTime startDate, DateTime endDate)
     {
         try
         {
@@ -135,7 +135,7 @@ public class ScheduleParser
             if (isFirstMessage)
             {
                 currentMessage.AppendLine($"📆 Период: {startDate:dd.MM.yyyy} - {endDate:dd.MM.yyyy}");
-                currentMessage.AppendLine($"📆 Группа: {groupTitle}");
+                currentMessage.AppendLine($"📆 Группа: {scheduleData.Group.Title}");
                 isFirstMessage = false;
             }
 
@@ -231,6 +231,7 @@ public class ScheduleParser
 
             var sb = new StringBuilder();
             sb.AppendLine($"📆 Период: {startDate:dd.MM.yyyy} - {endDate:dd.MM.yyyy}");
+            sb.AppendLine($"👨‍🏫 Преподаватель: {scheduleData.Teacher.Name}");
 
             foreach (var lesson in orderedList)
             {
@@ -240,8 +241,8 @@ public class ScheduleParser
                 }
 
                 sb.AppendLine($"\n🕒 <i>{lesson.TimeBegin:hh\\:mm} - {lesson.TimeEnd:hh\\:mm}</i>");
-                sb.AppendLine($"   <b>{lesson.Title}</b>");
-                sb.AppendLine($"   👥 Группа: {lesson.GroupName}");
+                sb.AppendLine($"    <b>{lesson.PairNumber}. {lesson.Title}</b>");
+                sb.AppendLine($"   👥 Группа: {lesson.GroupTitle}");
 
                 if (!string.IsNullOrEmpty(lesson.AuditoryTitle) && !string.IsNullOrEmpty(lesson.AuditoryLocation) && lesson.AuditoryTitle != lesson.AuditoryLocation)
                     sb.AppendLine($"   🚪 {lesson.AuditoryLocation}, каб. {lesson.AuditoryTitle}");
@@ -285,6 +286,8 @@ public class ScheduleParser
     private class ScheduleResponse
     {
         public List<Lesson> Events { get; set; } = new();
+        public TeacherInfo Teacher { get; set; } = new();
+        public GroupInfo Group { get; set; } = new();
     }
 
     private class Lesson
@@ -298,7 +301,7 @@ public class ScheduleParser
         public string TeacherName { get; set; } = string.Empty;
         public string AuditoryLocation { get; set; } = string.Empty;
         public string Comment { get; set; } = string.Empty;
-        public string GroupName { get; set; } = string.Empty;
+        public string GroupTitle { get; set; } = string.Empty;
         public string PairNumber { get; set; } = string.Empty;
     }
 
